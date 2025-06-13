@@ -45,8 +45,10 @@ HTML_TEMPLATE = '''
 
 def get_ec2_client(account):
     try:
-        session = GetAWSCredentials(account)
-        return session.client('ec2')
+        GetAWSCredentials(account)  # Sets global credentials
+        return boto3.client('ec2')  # Uses default boto3 with new credentials
+    except Exception as e:
+        raise RuntimeError(f"Failed to get credentials for account '{account}': {e}")
     except Exception as e:
         raise RuntimeError(f"Failed to get credentials for account '{account}': {e}")
 
@@ -195,4 +197,4 @@ def index():
     return render_template_string(HTML_TEMPLATE, result=result)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5656)
