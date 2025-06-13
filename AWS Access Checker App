@@ -17,7 +17,7 @@ HTML_TEMPLATE = '''
     Source (IP / SG ID / PL ID): <input type="text" name="source"><br>
     Destination IP: <input type="text" name="destination"><br>
     Port: <input type="text" name="port"><br>
-    Protocol (TCP/UDP/ALL): <input type="text" name="protocol" value="all"><br>
+    Protocol (TCP/UDP/ALL): <input type="text" name="protocol" value="tcp"><br>
     <input type="submit" value="Check">
   </form>
   {% if result %}
@@ -26,14 +26,14 @@ HTML_TEMPLATE = '''
   {% if result['rules'] %}
   <h3>Matching Rules</h3>
   <table border="1" cellpadding="5">
-    <tr><th>Rule Type</th><th>Source</th><th>Matched Value</th><th>Security Group Name</th><th>Security Group ID</th></tr>
+    <tr><th>Rule Type</th><th>Source</th><th>Matched Value</th><th>Security Group Name</th><th>Security Group ID</th><th>Port</th><th>Protocol</th></tr>
     {% for rule in result['rules'] %}
     <tr>
       <td>{{ rule.type }}</td>
       <td>{{ rule.source }}</td>
       <td>{{ rule.match }}</td>
       <td>{{ rule.sg_name }}</td>
-      <td>{{ rule.sg_id }}</td>
+      <td>{{ rule.sg_id }}</td><td>{{ rule.port }}</td><td>{{ rule.protocol }}</td>
     </tr>
     {% endfor %}
   </table>
@@ -47,6 +47,8 @@ def get_ec2_client(account):
     try:
         GetAWSCredentials(account)  # Sets global credentials
         return boto3.client('ec2')  # Uses default boto3 with new credentials
+    except Exception as e:
+        raise RuntimeError(f"Failed to get credentials for account '{account}': {e}")
     except Exception as e:
         raise RuntimeError(f"Failed to get credentials for account '{account}': {e}")
 
@@ -96,6 +98,10 @@ def get_enis_for_destination_ip(ec2, dest_ip):
         return matching_enis
     except botocore.exceptions.ClientError:
         return []
+    except botocore.exceptions.ClientError:
+        return []
+    except botocore.exceptions.ClientError:
+        return []
 
 def get_sg_name(ec2, sg_id):
     try:
@@ -110,17 +116,22 @@ def check_access(account, source, destination, port, protocol):
     except RuntimeError as e:
         return {"message": str(e), "rules": []}
 
-    try:
-        port = int(port)
-    except ValueError:
-        return {"message": "Invalid port number provided.", "rules": []}
+    if port.strip() == '':
+        port = None
+    else:
+        try:
+            port = int(port)
+        except ValueError:
+            return {"message": "Invalid port number provided.", "rules": []}
 
     protocol = protocol.lower()
     if protocol not in ['tcp', 'udp', 'all']:
         return {"message": "Invalid protocol. Please use TCP, UDP, or ALL.", "rules": []}
 
+    result_lines = []
     matched_rules = []
     seen_rules = set()
+    # Extend seen_rules to consider protocol and port for deduplication  # To prevent duplicates
     source_is_ip = source.count('.') == 3
 
     eni_ids = get_enis_for_destination_ip(ec2, destination)
@@ -145,11 +156,16 @@ def check_access(account, source, destination, port, protocol):
                 perm_proto = perm.get('IpProtocol')
                 if protocol != 'all' and perm_proto not in [protocol, '-1']:
                     continue
-                if perm.get('FromPort') is not None and perm.get('ToPort') is not None and not (perm['FromPort'] <= port <= perm['ToPort']):
+                if port is not None and perm.get('FromPort') is not None and perm.get('ToPort') is not None and not (perm['FromPort'] <= port <= perm['ToPort']):
                     continue
 
                 for ip_range in perm.get('IpRanges', []):
                     if 'CidrIp' in ip_range and ip_in_cidr(source, ip_range['CidrIp']):
+                        rule = {"type": "IP", "source": source, "match": ip_range['CidrIp'], "sg_name": sg_name, "sg_id": sg_id, "protocol": perm_proto, "port": port}
+                        rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'], rule.get('protocol'), rule.get('port'))
+                        if rule_key not in seen_rules:
+                            seen_rules.add(rule_key)
+                            matched_rules.append(rule)                    if 'CidrIp' in ip_range and ip_in_cidr(source, ip_range['CidrIp']):
                         rule = {"type": "IP", "source": source, "match": ip_range['CidrIp'], "sg_name": sg_name, "sg_id": sg_id}
                         rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
                         if rule_key not in seen_rules:
@@ -161,7 +177,7 @@ def check_access(account, source, destination, port, protocol):
                         source_ips = find_ips_in_source_sg(ec2, sg_ref['GroupId'])
                         if source in source_ips:
                             ref_sg_name = get_sg_name(ec2, sg_ref['GroupId'])
-                            rule = {"type": "SG", "source": source, "match": sg_ref['GroupId'], "sg_name": ref_sg_name, "sg_id": sg_ref['GroupId']}
+                            rule = {"type": "SG", "source": source, "match": sg_ref['GroupId'], "sg_name": ref_sg_name, "sg_id": sg_ref['GroupId'], "protocol": perm_proto, "port": port}
                             rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
                             if rule_key not in seen_rules:
                                 seen_rules.add(rule_key)
@@ -170,7 +186,7 @@ def check_access(account, source, destination, port, protocol):
                     pl_ids = [pl['PrefixListId'] for pl in perm.get('PrefixListIds', [])]
                     allowed, pl_id = is_ip_allowed_by_prefix_lists(ec2, source, pl_ids)
                     if allowed:
-                        rule = {"type": "PL", "source": source, "match": pl_id, "sg_name": sg_name, "sg_id": sg_id}
+                        rule = {"type": "PL", "source": source, "match": pl_id, "sg_name": sg_name, "sg_id": sg_id, "protocol": perm_proto, "port": port}
                         rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
                         if rule_key not in seen_rules:
                             seen_rules.add(rule_key)
@@ -180,7 +196,7 @@ def check_access(account, source, destination, port, protocol):
                     for sg_ref in perm.get('UserIdGroupPairs', []):
                         if sg_ref['GroupId'] == source:
                             ref_sg_name = get_sg_name(ec2, source)
-                            rule = {"type": "SG", "source": source, "match": source, "sg_name": ref_sg_name, "sg_id": source}
+                            rule = {"type": "SG", "source": source, "match": source, "sg_name": ref_sg_name, "sg_id": source, "protocol": perm_proto, "port": port}
                             rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
                             if rule_key not in seen_rules:
                                 seen_rules.add(rule_key)
@@ -189,13 +205,14 @@ def check_access(account, source, destination, port, protocol):
                 elif source.startswith('pl-'):
                     for pl in perm.get('PrefixListIds', []):
                         if pl['PrefixListId'] == source:
-                            rule = {"type": "PL", "source": source, "match": source, "sg_name": sg_name, "sg_id": sg_id}
+                            rule = {"type": "PL", "source": source, "match": source, "sg_name": sg_name, "sg_id": sg_id, "protocol": perm_proto, "port": port}
                             rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
                             if rule_key not in seen_rules:
                                 seen_rules.add(rule_key)
                                 matched_rules.append(rule)
 
     message = f"✅ {len(matched_rules)} rule(s) matched." if matched_rules else "❌ Access NOT allowed based on available SG rules."
+    matched_rules.sort(key=lambda x: (x['sg_name'], x['protocol'], x['port'] if x['port'] is not None else 0))
     return {"message": message, "rules": matched_rules}
 
 @app.route('/', methods=['GET', 'POST'])
@@ -212,3 +229,4 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5656)
+
