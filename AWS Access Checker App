@@ -4,8 +4,6 @@ from ipaddress import ip_address, ip_network
 import botocore.exceptions
 from awslogin import GetAWSCredentials
 
-#new
-
 app = Flask(__name__)
 
 HTML_TEMPLATE = '''
@@ -19,7 +17,7 @@ HTML_TEMPLATE = '''
     Source (IP / SG ID / PL ID): <input type="text" name="source"><br>
     Destination IP: <input type="text" name="destination"><br>
     Port: <input type="text" name="port"><br>
-    Protocol (TCP/UDP/ALL): <input type="text" name="protocol" value="tcp"><br>
+    Protocol (TCP/UDP/ALL): <input type="text" name="protocol" value="all"><br>
     <input type="submit" value="Check">
   </form>
   {% if result %}
@@ -49,8 +47,6 @@ def get_ec2_client(account):
     try:
         GetAWSCredentials(account)  # Sets global credentials
         return boto3.client('ec2')  # Uses default boto3 with new credentials
-    except Exception as e:
-        raise RuntimeError(f"Failed to get credentials for account '{account}': {e}")
     except Exception as e:
         raise RuntimeError(f"Failed to get credentials for account '{account}': {e}")
 
@@ -100,10 +96,6 @@ def get_enis_for_destination_ip(ec2, dest_ip):
         return matching_enis
     except botocore.exceptions.ClientError:
         return []
-    except botocore.exceptions.ClientError:
-        return []
-    except botocore.exceptions.ClientError:
-        return []
 
 def get_sg_name(ec2, sg_id):
     try:
@@ -127,9 +119,8 @@ def check_access(account, source, destination, port, protocol):
     if protocol not in ['tcp', 'udp', 'all']:
         return {"message": "Invalid protocol. Please use TCP, UDP, or ALL.", "rules": []}
 
-    result_lines = []
     matched_rules = []
-    seen_rules = set()  # To prevent duplicates
+    seen_rules = set()
     source_is_ip = source.count('.') == 3
 
     eni_ids = get_enis_for_destination_ip(ec2, destination)
@@ -221,4 +212,3 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5656)
-
