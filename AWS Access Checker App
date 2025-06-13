@@ -45,8 +45,8 @@ HTML_TEMPLATE = '''
 
 def get_ec2_client(account):
     try:
-        GetAWSCredentials(account)
-        return boto3.client('ec2')
+        session = GetAWSCredentials(account)
+        return session.client('ec2')
     except Exception as e:
         raise RuntimeError(f"Failed to get credentials for account '{account}': {e}")
 
@@ -94,6 +94,10 @@ def get_enis_for_destination_ip(ec2, dest_ip):
                 if p.get('PrivateIpAddress') == dest_ip:
                     matching_enis.append(eni['NetworkInterfaceId'])
         return matching_enis
+    except botocore.exceptions.ClientError:
+        return []
+    except botocore.exceptions.ClientError:
+        return []
     except botocore.exceptions.ClientError:
         return []
 
