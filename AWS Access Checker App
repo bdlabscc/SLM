@@ -1,0 +1,158 @@
+from flask import Flask, request, render_template_string
+import boto3
+from ipaddress import ip_address, ip_network
+
+app = Flask(__name__)
+ec2 = boto3.client('ec2')
+elbv2 = boto3.client('elbv2')
+elb = boto3.client('elb')
+lambda_client = boto3.client('lambda')
+rds = boto3.client('rds')
+
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head><title>AWS Access Checker</title></head>
+<body>
+  <h2>AWS Access Checker</h2>
+  <form method="post">
+    Source (IP / SG ID / PL ID): <input type="text" name="source"><br>
+    Destination Resource ID or Name: <input type="text" name="destination"><br>
+    Port: <input type="text" name="port"><br>
+    <input type="submit" value="Check">
+  </form>
+  {% if result %}
+  <h3>Result</h3>
+  <pre>{{ result }}</pre>
+  {% endif %}
+</body>
+</html>
+'''
+
+def ip_in_cidr(ip, cidr):
+    return ip_address(ip) in ip_network(cidr)
+
+def find_ips_in_source_sg(sg_id):
+    ips = set()
+    enis = ec2.describe_network_interfaces(Filters=[
+        {'Name': 'group-id', 'Values': [sg_id]}
+    ])['NetworkInterfaces']
+    for eni in enis:
+        ips.add(eni['PrivateIpAddress'])
+        for p in eni.get('PrivateIpAddresses', []):
+            ips.add(p['PrivateIpAddress'])
+    return ips
+
+def is_ip_allowed_by_prefix_lists(source_ip, prefix_list_ids):
+    for pl_id in prefix_list_ids:
+        pl = ec2.get_managed_prefix_list(PrefixListId=pl_id)['PrefixList']
+        entries = ec2.get_managed_prefix_list_entries(PrefixListId=pl_id, TargetVersion=pl['Version'])['Entries']
+        for entry in entries:
+            if ip_in_cidr(source_ip, entry['Cidr']):
+                return True, pl_id
+    return False, None
+
+def get_enis_for_destination(destination):
+    eni_ids = set()
+    try:
+        ec2.describe_instances(InstanceIds=[destination])
+        enis = ec2.describe_network_interfaces(Filters=[
+            {'Name': 'attachment.instance-id', 'Values': [destination]}
+        ])['NetworkInterfaces']
+        eni_ids.update([eni['NetworkInterfaceId'] for eni in enis])
+    except:
+        pass
+
+    try:
+        lb = elbv2.describe_load_balancers(Names=[destination])['LoadBalancers'][0]
+        eni_ids.update(lb['AvailabilityZones'][0]['LoadBalancerAddresses'][0]['NetworkInterfaceId'])
+    except:
+        pass
+
+    try:
+        elb.describe_load_balancers(LoadBalancerNames=[destination])
+        # Not directly retrievable ENI, skip for classic ELB here
+    except:
+        pass
+
+    try:
+        func = lambda_client.get_function(FunctionName=destination)['Configuration']
+        if 'VpcConfig' in func:
+            enis = ec2.describe_network_interfaces(Filters=[
+                {'Name': 'group-id', 'Values': func['VpcConfig']['SecurityGroupIds']}
+            ])['NetworkInterfaces']
+            eni_ids.update([eni['NetworkInterfaceId'] for eni in enis])
+    except:
+        pass
+
+    try:
+        db = rds.describe_db_instances(DBInstanceIdentifier=destination)['DBInstances'][0]
+        enis = ec2.describe_network_interfaces(Filters=[
+            {'Name': 'vpc-id', 'Values': [db['DBSubnetGroup']['VpcId']]}
+        ])['NetworkInterfaces']
+        eni_ids.update([eni['NetworkInterfaceId'] for eni in enis])
+    except:
+        pass
+
+    return list(eni_ids)
+
+def check_access(source, destination, port):
+    port = int(port)
+    result_lines = []
+    source_is_ip = False
+    if source.count('.') == 3:
+        source_is_ip = True
+    
+    eni_ids = get_enis_for_destination(destination)
+    if not eni_ids:
+        return "No ENIs found for the given destination."
+
+    for eni_id in eni_ids:
+        eni = ec2.describe_network_interfaces(NetworkInterfaceIds=[eni_id])['NetworkInterfaces'][0]
+        for group in eni['Groups']:
+            sg_id = group['GroupId']
+            sg_data = ec2.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
+            for perm in sg_data.get('IpPermissions', []):
+                if perm.get('FromPort') is not None and perm.get('ToPort') is not None:
+                    if not (perm['FromPort'] <= port <= perm['ToPort']):
+                        continue
+
+                for ip_range in perm.get('IpRanges', []):
+                    if 'CidrIp' in ip_range and ip_in_cidr(source, ip_range['CidrIp']):
+                        result_lines.append(f"Allowed by SG {sg_id} via direct IP {source} in rule {ip_range['CidrIp']}")
+
+                if source_is_ip:
+                    for sg_ref in perm.get('UserIdGroupPairs', []):
+                        source_ips = find_ips_in_source_sg(sg_ref['GroupId'])
+                        if source in source_ips:
+                            result_lines.append(f"Allowed by SG {sg_id} via source IP {source} through SG {sg_ref['GroupId']}")
+
+                    pl_ids = [pl['PrefixListId'] for pl in perm.get('PrefixListIds', [])]
+                    allowed, pl_id = is_ip_allowed_by_prefix_lists(source, pl_ids)
+                    if allowed:
+                        result_lines.append(f"Allowed by SG {sg_id} via Prefix List {pl_id}")
+
+                elif source.startswith('sg-'):
+                    for sg_ref in perm.get('UserIdGroupPairs', []):
+                        if sg_ref['GroupId'] == source:
+                            result_lines.append(f"Allowed by SG {sg_id} via referenced SG {source}")
+
+                elif source.startswith('pl-'):
+                    for pl in perm.get('PrefixListIds', []):
+                        if pl['PrefixListId'] == source:
+                            result_lines.append(f"Allowed by SG {sg_id} via Prefix List {source}")
+
+    return "\n".join(result_lines) if result_lines else "Access NOT allowed"
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    result = ''
+    if request.method == 'POST':
+        source = request.form['source'].strip()
+        destination = request.form['destination'].strip()
+        port = request.form['port'].strip()
+        result = check_access(source, destination, port)
+    return render_template_string(HTML_TEMPLATE, result=result)
+
+if __name__ == '__main__':
+    app.run(debug=True)
