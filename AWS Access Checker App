@@ -45,8 +45,8 @@ HTML_TEMPLATE = '''
 
 def get_ec2_client(account):
     try:
-        session = GetAWSCredentials(account)
-        return session.client('ec2')
+        GetAWSCredentials(account)
+        return boto3.client('ec2')
     except Exception as e:
         raise RuntimeError(f"Failed to get credentials for account '{account}': {e}")
 
