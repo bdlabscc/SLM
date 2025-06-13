@@ -17,7 +17,7 @@ HTML_TEMPLATE = '''
     Source (IP / SG ID / PL ID): <input type="text" name="source"><br>
     Destination IP: <input type="text" name="destination"><br>
     Port: <input type="text" name="port"><br>
-    Protocol (TCP/UDP/ALL): <input type="text" name="protocol" value="all"><br>
+    Protocol (TCP/UDP/ALL): <input type="text" name="protocol" value="tcp"><br>
     <input type="submit" value="Check">
   </form>
   {% if result %}
@@ -158,10 +158,10 @@ def check_access(account, source, destination, port, protocol):
                 for ip_range in perm.get('IpRanges', []):
                     if 'CidrIp' in ip_range and ip_in_cidr(source, ip_range['CidrIp']):
                         rule = {"type": "IP", "source": source, "match": ip_range['CidrIp'], "sg_name": sg_name, "sg_id": sg_id}
-                rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
-                if rule_key not in seen_rules:
-                    seen_rules.add(rule_key)
-                    matched_rules.append(rule)
+                        rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
+                        if rule_key not in seen_rules:
+                            seen_rules.add(rule_key)
+                            matched_rules.append(rule)
 
                 if source_is_ip:
                     for sg_ref in perm.get('UserIdGroupPairs', []):
@@ -219,3 +219,4 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5656)
+
