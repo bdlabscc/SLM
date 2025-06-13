@@ -17,7 +17,7 @@ HTML_TEMPLATE = '''
     Source (IP / SG ID / PL ID): <input type="text" name="source"><br>
     Destination IP: <input type="text" name="destination"><br>
     Port: <input type="text" name="port"><br>
-    Protocol (TCP/UDP/ALL): <input type="text" name="protocol" value="tcp"><br>
+    Protocol (TCP/UDP/ALL): <input type="text" name="protocol" value="all"><br>
     <input type="submit" value="Check">
   </form>
   {% if result %}
@@ -127,6 +127,7 @@ def check_access(account, source, destination, port, protocol):
 
     result_lines = []
     matched_rules = []
+    seen_rules = set()  # To prevent duplicates
     source_is_ip = source.count('.') == 3
 
     eni_ids = get_enis_for_destination_ip(ec2, destination)
@@ -156,30 +157,50 @@ def check_access(account, source, destination, port, protocol):
 
                 for ip_range in perm.get('IpRanges', []):
                     if 'CidrIp' in ip_range and ip_in_cidr(source, ip_range['CidrIp']):
-                        matched_rules.append({"type": "IP", "source": source, "match": ip_range['CidrIp'], "sg_name": sg_name, "sg_id": sg_id})
+                        rule = {"type": "IP", "source": source, "match": ip_range['CidrIp'], "sg_name": sg_name, "sg_id": sg_id}
+                rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
+                if rule_key not in seen_rules:
+                    seen_rules.add(rule_key)
+                    matched_rules.append(rule)
 
                 if source_is_ip:
                     for sg_ref in perm.get('UserIdGroupPairs', []):
                         source_ips = find_ips_in_source_sg(ec2, sg_ref['GroupId'])
                         if source in source_ips:
                             ref_sg_name = get_sg_name(ec2, sg_ref['GroupId'])
-                            matched_rules.append({"type": "SG", "source": source, "match": sg_ref['GroupId'], "sg_name": ref_sg_name, "sg_id": sg_ref['GroupId']})
+                            rule = {"type": "SG", "source": source, "match": sg_ref['GroupId'], "sg_name": ref_sg_name, "sg_id": sg_ref['GroupId']}
+                            rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
+                            if rule_key not in seen_rules:
+                                seen_rules.add(rule_key)
+                                matched_rules.append(rule)
 
                     pl_ids = [pl['PrefixListId'] for pl in perm.get('PrefixListIds', [])]
                     allowed, pl_id = is_ip_allowed_by_prefix_lists(ec2, source, pl_ids)
                     if allowed:
-                        matched_rules.append({"type": "PL", "source": source, "match": pl_id, "sg_name": sg_name, "sg_id": sg_id})
+                        rule = {"type": "PL", "source": source, "match": pl_id, "sg_name": sg_name, "sg_id": sg_id}
+                        rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
+                        if rule_key not in seen_rules:
+                            seen_rules.add(rule_key)
+                            matched_rules.append(rule)
 
                 elif source.startswith('sg-'):
                     for sg_ref in perm.get('UserIdGroupPairs', []):
                         if sg_ref['GroupId'] == source:
                             ref_sg_name = get_sg_name(ec2, source)
-                            matched_rules.append({"type": "SG", "source": source, "match": source, "sg_name": ref_sg_name, "sg_id": source})
+                            rule = {"type": "SG", "source": source, "match": source, "sg_name": ref_sg_name, "sg_id": source}
+                            rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
+                            if rule_key not in seen_rules:
+                                seen_rules.add(rule_key)
+                                matched_rules.append(rule)
 
                 elif source.startswith('pl-'):
                     for pl in perm.get('PrefixListIds', []):
                         if pl['PrefixListId'] == source:
-                            matched_rules.append({"type": "PL", "source": source, "match": source, "sg_name": sg_name, "sg_id": sg_id})
+                            rule = {"type": "PL", "source": source, "match": source, "sg_name": sg_name, "sg_id": sg_id}
+                            rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'])
+                            if rule_key not in seen_rules:
+                                seen_rules.add(rule_key)
+                                matched_rules.append(rule)
 
     message = f"✅ {len(matched_rules)} rule(s) matched." if matched_rules else "❌ Access NOT allowed based on available SG rules."
     return {"message": message, "rules": matched_rules}
