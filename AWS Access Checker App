@@ -171,13 +171,13 @@ def check_access(account, source, destination, port, protocol):
                 if source_is_ip:
                     for sg_ref in perm.get('UserIdGroupPairs', []):
                         source_account = request.form.get('source_account', '').strip()
-                            ec2_for_ip_check = ec2
-                            if source_account and source_account != account:
-                                try:
-                                    GetAWSCredentials(source_account)
-                                    ec2_for_ip_check = boto3.client('ec2')
-                                except Exception:
-                                    ec2_for_ip_check = ec2  # fallback
+                        ec2_for_ip_check = ec2
+                        if source_account and source_account != account:
+                            try:
+                                GetAWSCredentials(source_account)
+                                ec2_for_ip_check = boto3.client('ec2')
+                            except Exception:
+                                ec2_for_ip_check = ec2  # fallback
 
                             source_ips = find_ips_in_source_sg(ec2_for_ip_check, sg_ref['GroupId'])
                         if source in source_ips:
