@@ -170,16 +170,25 @@ def check_access(account, source, destination, port, protocol):
 
                 if source_is_ip:
                     for sg_ref in perm.get('UserIdGroupPairs', []):
-                        source_account = request.form.get('source_account', '').strip()
                         ec2_for_ip_check = ec2
+                        source_account = request.form.get('source_account', '').strip()
                         if source_account and source_account != account:
                             try:
                                 GetAWSCredentials(source_account)
                                 ec2_for_ip_check = boto3.client('ec2')
                             except Exception:
-                                ec2_for_ip_check = ec2  # fallback
-
+                                ec2_for_ip_check = ec2
+                        try:
                             source_ips = find_ips_in_source_sg(ec2_for_ip_check, sg_ref['GroupId'])
+                            if source in source_ips:
+                                ref_sg_name = get_sg_name(ec2_for_ip_check, sg_ref['GroupId'])
+                                rule = {"type": "SG", "source": source, "match": sg_ref['GroupId'], "sg_name": ref_sg_name, "sg_id": sg_ref['GroupId'], "protocol": perm_proto, "port": port}
+                                rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'], rule['protocol'], rule['port'])
+                                if rule_key not in seen_rules:
+                                    seen_rules.add(rule_key)
+                                    matched_rules.append(rule)
+                        except Exception as e:
+                            continue
                         if source in source_ips:
                             ref_sg_name = get_sg_name(ec2, sg_ref['GroupId'])
                             rule = {"type": "SG", "source": source, "match": sg_ref['GroupId'], "sg_name": ref_sg_name, "sg_id": sg_ref['GroupId'], "protocol": perm_proto, "port": port}
