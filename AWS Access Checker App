@@ -13,7 +13,7 @@ HTML_TEMPLATE = '''
 <body>
   <h2>AWS Access Checker</h2>
   <form method="post">
-    AWS Account Code: <input type="text" name="account"><br>
+    Destination AWS Account Code: <input type="text" name="account"><br>Source AWS Account Code (if using cross-account SG): <input type="text" name="source_account"><br>
     Source (IP / SG ID / PL ID): <input type="text" name="source"><br>
     Destination IP: <input type="text" name="destination"><br>
     Port: <input type="text" name="port"><br>
@@ -47,6 +47,8 @@ HTML_TEMPLATE = '''
 </body>
 </html>
 '''
+
+# Create EC2 client after switching account
 
 def get_ec2_client(account):
     try:
@@ -187,6 +189,29 @@ def check_access(account, source, destination, port, protocol):
                             matched_rules.append(rule)
 
                 elif source.startswith('sg-'):
+                    for sg_ref in perm.get('UserIdGroupPairs', []):
+                        if sg_ref['GroupId'] == source:
+                            ref_sg_name = get_sg_name(ec2, source)
+                            rule = {"type": "SG", "source": source, "match": source, "sg_name": ref_sg_name, "sg_id": source, "protocol": perm_proto, "port": port}
+                            rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'], rule['protocol'], rule['port'])
+                            if rule_key not in seen_rules:
+                                seen_rules.add(rule_key)
+                                matched_rules.append(rule)
+
+                    # Check if this SG belongs to another account
+                    if account != request.form.get('source_account', '').strip():
+                        try:
+                            GetAWSCredentials(request.form.get('source_account', '').strip())
+                            ec2_src = boto3.client('ec2')
+                            source_ips = find_ips_in_source_sg(ec2_src, source)
+                            for ip in source_ips:
+                                rule = {"type": "SG", "source": ip, "match": source, "sg_name": get_sg_name(ec2_src, source), "sg_id": source, "protocol": perm_proto, "port": port}
+                                rule_key = (rule['type'], rule['source'], rule['match'], rule['sg_id'], rule['protocol'], rule['port'])
+                                if rule_key not in seen_rules:
+                                    seen_rules.add(rule_key)
+                                    matched_rules.append(rule)
+                        except Exception:
+                            continue
                     for sg_ref in perm.get('UserIdGroupPairs', []):
                         if sg_ref['GroupId'] == source:
                             ref_sg_name = get_sg_name(ec2, source)
