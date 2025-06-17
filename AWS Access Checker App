@@ -177,7 +177,8 @@ def check_access(account, source, destination, port, protocol):
                                     GetAWSCredentials(source_account)
                                     ec2_for_ip_check = boto3.client('ec2')
                                 except Exception:
-                                    pass
+                                    ec2_for_ip_check = ec2  # fallback
+
                             source_ips = find_ips_in_source_sg(ec2_for_ip_check, sg_ref['GroupId'])
                         if source in source_ips:
                             ref_sg_name = get_sg_name(ec2, sg_ref['GroupId'])
