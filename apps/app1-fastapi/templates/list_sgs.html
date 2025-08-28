@@ -2,26 +2,30 @@
 <html>
 <head><title>Security Groups</title></head>
 <body>
-    <h2>Security Groups</h2>
-    {% for profile, groups in sg_data.items() %}
-        <h3>Profile: {{ profile }}</h3>
-        <table border="1" cellpadding="5">
-            <tr><th>GroupId</th><th>Name</th><th>Description</th><th>VPC</th></tr>
-            {% for sg in groups %}
-                <tr>
-                    <td>
-                        {% if sg.GroupId != "Error" %}
-                            <a href="/sg_details/{{ profile }}/{{ sg.GroupId }}">{{ sg.GroupId }}</a>
-                        {% else %}
-                            {{ sg.GroupId }}
-                        {% endif %}
-                    </td>
-                    <td>{{ sg.GroupName }}</td>
-                    <td>{{ sg.Description }}</td>
-                    <td>{{ sg.VpcId if sg.VpcId else "-" }}</td>
-                </tr>
-            {% endfor %}
-        </table>
-    {% endfor %}
+<h2>Security Groups</h2>
+<p><a href="/">Back</a></p>
+
+{% for payload in results %}
+  <h3>Profile: {{ payload.profile }}</h3>
+  {% if not payload.ok %}
+    <p>Error: {{ payload.error }}</p>
+  {% else %}
+    {% if payload.groups|length == 0 %}
+      <p>No security groups found.</p>
+    {% else %}
+      <table border="1" cellpadding="4" cellspacing="0">
+        <tr><th>GroupId</th><th>GroupName</th><th>Description</th><th>VPC</th></tr>
+        {% for sg in payload.groups %}
+        <tr>
+          <td><a href="/sg_details?profile={{ payload.profile }}&sg_id={{ sg.GroupId }}{% if region %}&region={{ region }}{% endif %}">{{ sg.GroupId }}</a></td>
+          <td>{{ sg.GroupName }}</td>
+          <td>{{ sg.Description }}</td>
+          <td>{{ sg.VpcId or "-" }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+  {% endif %}
+{% endfor %}
 </body>
 </html>

@@ -2,11 +2,18 @@
 <html>
 <head><title>AWS SG Viewer</title></head>
 <body>
-    <h2>Enter AWS Profile(s)</h2>
-    <form action="/list_sgs" method="post">
-        <label>Profiles (comma or space separated):</label><br>
-        <input type="text" name="profiles" required>
-        <button type="submit">Submit</button>
-    </form>
+<h2>AWS Security Groups Viewer</h2>
+<form action="/list_sgs" method="post" enctype="multipart/form-data">
+<p><b>Profiles</b> (comma, space, or newline separated):<br>
+<textarea name="profiles" rows="4" cols="60"></textarea></p>
+
+<p>OR upload a text file with profiles:<br>
+<input type="file" name="profiles_file" accept=".txt"></p>
+
+<p>Region (optional, e.g., us-east-1). If blank, uses profile default:<br>
+<input type="text" name="region" size="20" /></p>
+
+<p><button type="submit">List Security Groups</button></p>
+</form>
 </body>
 </html>
