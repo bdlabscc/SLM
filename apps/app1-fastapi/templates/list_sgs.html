@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head><title>Security Groups</title></head>
+<body>
+    <h2>Security Groups</h2>
+    {% for profile, groups in sg_data.items() %}
+        <h3>Profile: {{ profile }}</h3>
+        <table border="1" cellpadding="5">
+            <tr><th>GroupId</th><th>Name</th><th>Description</th><th>VPC</th></tr>
+            {% for sg in groups %}
+                <tr>
+                    <td>
+                        {% if sg.GroupId != "Error" %}
+                            <a href="/sg_details/{{ profile }}/{{ sg.GroupId }}">{{ sg.GroupId }}</a>
+                        {% else %}
+                            {{ sg.GroupId }}
+                        {% endif %}
+                    </td>
+                    <td>{{ sg.GroupName }}</td>
+                    <td>{{ sg.Description }}</td>
+                    <td>{{ sg.VpcId if sg.VpcId else "-" }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% endfor %}
+</body>
+</html>

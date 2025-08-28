@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>SG Details</title></head>
+<body>
+    <h2>Security Group Details ({{ sg.GroupId }})</h2>
+    <p><b>Name:</b> {{ sg.GroupName }}</p>
+    <p><b>Description:</b> {{ sg.Description }}</p>
+    <p><b>VPC:</b> {{ sg.VpcId if sg.VpcId else "-" }}</p>
+
+    <h3>Inbound Rules</h3>
+    <ul>
+        {% for rule in sg.IpPermissions %}
+            <li>{{ rule | safe }}</li>
+        {% endfor %}
+    </ul>
+
+    <h3>Outbound Rules</h3>
+    <ul>
+        {% for rule in sg.IpPermissionsEgress %}
+            <li>{{ rule | safe }}</li>
+        {% endfor %}
+    </ul>
+
+    <a href="/">Back</a>
+</body>
+</html>
